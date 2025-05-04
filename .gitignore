@@ -25,3 +25,5 @@ go.work.sum
 .env
 
 golt
+libtermbox2.*
+*.o

@@ -1,16 +1,24 @@
 package main
 
 /*
+
 #define TB_IMPL
 #define TB_OPT_ATTR_W 32
-#include "termbox2.h"
+#include "termbox2/termbox2.h"
+
+// .so (shared library)
+#cgo LDFLAGS: -Ltermbox2 -Wl,-rpath,termbox2 -ltermbox2
+
+// .a (static library)
+// #cgo LDFLAGS: -Ltermbox2 -Wl,-rpath,termbox2 -l:libtermbox2.a
+
 */
 import "C"
 import (
-	"flag"
-	"math/rand/v2"
-	"slices"
-	"time"
+    "flag"
+    "math/rand/v2"
+    "slices"
+    "time"
 )
 
 
@@ -97,15 +105,18 @@ func (g *grid) show(cfg *config) {
                 continue
             }
 
-            var ch rune = rune(cfg.ch[0])
+            var lch rune = rune(cfg.ch[0])
+            var rch rune = rune(cfg.ch[1])
             if cfg.showNeighbours {
-                ch = '0' + rune(g.neighbours(x, y, cfg.wrap))
+                lch = '0' + rune(g.neighbours(x, y, cfg.wrap))
+                rch = '0' + rune(g.neighbours(x, y, cfg.wrap))
+
             }
 
             sx := x * 2
             sy := y
-            C.tb_set_cell(C.int(sx), C.int(sy), C.uint32_t(ch), C.uintattr_t(cfg.fg), C.uintattr_t(cfg.bg))
-            C.tb_set_cell(C.int(sx + 1), C.int(sy), C.uint32_t(ch), C.uintattr_t(cfg.fg), C.uintattr_t(cfg.bg))
+            C.tb_set_cell(C.int(sx), C.int(sy), C.uint32_t(lch), C.uintattr_t(cfg.fg), C.uintattr_t(cfg.bg))
+            C.tb_set_cell(C.int(sx + 1), C.int(sy), C.uint32_t(rch), C.uintattr_t(cfg.fg), C.uintattr_t(cfg.bg))
         }
     }
 }
@@ -174,10 +185,14 @@ func configCreate() *config {
     flag.BoolVar(&cfg.paused, "p", false, "Paused")
     flag.UintVar(&cfg.fg, "fg", 0x0000ff, "Foreground (character) color")
     flag.UintVar(&cfg.bg, "bg", 0xffffff, "Background color")
-    flag.StringVar(&cfg.ch, "ch", " ", "Character to use")
+    flag.StringVar(&cfg.ch, "ch", " ", "Characters to use for cells, length 2")
     flag.BoolVar(&cfg.wrap, "w", false, "Wrap around")
 
     flag.Parse()
+
+    if len(cfg.ch) != 2 {
+        cfg.ch = "  "
+    }
 
     return &cfg
 }
@@ -208,6 +223,7 @@ func main() {
     rand := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano())))
 
     C.tb_init()
+    defer C.tb_shutdown()
     C.tb_set_output_mode(C.int(5)) // TB_OUTPUT_TRUECOLOR
 
     cfg := configCreate()
@@ -256,5 +272,4 @@ func main() {
         time.Sleep(40 * time.Millisecond)
     }
 
-    C.tb_shutdown()
 }
