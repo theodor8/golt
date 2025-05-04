@@ -2,13 +2,15 @@ package main
 
 /*
 #define TB_IMPL
+#define TB_OPT_ATTR_W 32
 #include "termbox2.h"
 */
 import "C"
 import (
-    "time"
-    "flag"
-    "math/rand/v2"
+	"flag"
+	"math/rand/v2"
+	"slices"
+	"time"
 )
 
 
@@ -17,13 +19,13 @@ type grid struct {
     buffer [][]bool
 }
 
-func gridCreate(cfg *config) *grid {
+func gridCreate(w, h int) *grid {
     g := grid{}
-    g.grid = make([][]bool, cfg.w)
-    g.buffer = make([][]bool, cfg.w)
-    for x := range cfg.w {
-        g.grid[x] = make([]bool, cfg.h)
-        g.buffer[x] = make([]bool, cfg.h)
+    g.grid = make([][]bool, w)
+    g.buffer = make([][]bool, w)
+    for x := range w {
+        g.grid[x] = make([]bool, h)
+        g.buffer[x] = make([]bool, h)
     }
     return &g
 }
@@ -36,6 +38,29 @@ func (g *grid) clear() {
     for x := range g.grid {
         for y := range g.grid[x] {
             g.grid[x][y] = false
+        }
+    }
+}
+
+func (g *grid) resize(w, h int) {
+    if w != len(g.grid) {
+        if w > cap(g.grid) {
+            g.grid = slices.Grow(g.grid, (w - cap(g.grid)) * 2)
+            g.buffer = slices.Grow(g.buffer, (w - cap(g.grid)) * 2)
+        }
+        g.grid = g.grid[:w]
+        g.buffer = g.buffer[:w]
+    }
+    if h != len(g.grid[0]) {
+        if h > cap(g.grid[0]) {
+            for x := range g.grid {
+                g.grid[x] = slices.Grow(g.grid[x], (h - cap(g.grid[0])) * 2)
+                g.buffer[x] = slices.Grow(g.buffer[x], (h - cap(g.grid[0])) * 2)
+            }
+        }
+        for x := range g.grid {
+            g.grid[x] = g.grid[x][:h]
+            g.buffer[x] = g.buffer[x][:h]
         }
     }
 }
@@ -54,7 +79,7 @@ func (g *grid) setPattern(pattern [][]bool, x, y int) {
     }
 }
 
-func (g *grid) setRandomPattern(rand *rand.Rand, w, h, x, y int) {
+func (g *grid) setRandomPattern(rand *rand.Rand, x, y, w, h int) {
     for px := x - w / 2; px < x + w / 2; px++ {
         for py := y - h / 2; py < y + h / 2; py++ {
             if g.oob(px, py) {
@@ -65,45 +90,26 @@ func (g *grid) setRandomPattern(rand *rand.Rand, w, h, x, y int) {
     }
 }
 
-func (g *grid) show(cfg *config) bool {
-    cellOnScreen := false
+func (g *grid) show(cfg *config) {
     for x := range g.grid {
         for y := range g.grid[x] {
             if !g.grid[x][y] {
                 continue
             }
-            w := int(C.tb_width()) / 2
-            h := int(C.tb_height())
-            if x < cfg.x - w / 2 || x > cfg.x + w / 2 || y < cfg.y - h / 2 || y > cfg.y + h / 2 {
-                continue
+
+            var ch rune = rune(cfg.ch[0])
+            if cfg.showNeighbours {
+                ch = '0' + rune(g.neighbours(x, y))
             }
-            ns := g.neighbours(x, y)
-            setCell(x, y, ns, cfg)
-            cellOnScreen = true
+
+            sx := x * 2
+            sy := y
+            C.tb_set_cell(C.int(sx), C.int(sy), C.uint32_t(ch), C.uintattr_t(cfg.fg), C.uintattr_t(cfg.bg))
+            C.tb_set_cell(C.int(sx + 1), C.int(sy), C.uint32_t(ch), C.uintattr_t(cfg.fg), C.uintattr_t(cfg.bg))
         }
     }
-    return cellOnScreen
 }
 
-
-func setCell(x, y, ns int, cfg *config) {
-    var ch rune = rune(cfg.ch[0])
-    if cfg.showNeighbours {
-        ch = '0' + rune(ns)
-    }
-
-    sx := (x - cfg.x) * 2 + int(C.tb_width()) / 2
-    sy := y - cfg.y + int(C.tb_height()) / 2
-    C.tb_set_cell(C.int(sx),
-                  C.int(sy),
-                  C.uint32_t(ch),
-                  C.uintattr_t(cfg.fg),
-                  C.uintattr_t(cfg.bg))
-    C.tb_set_cell(C.int(sx + 1),
-                  C.int(sy),
-                  C.uint32_t(ch),
-                  C.uintattr_t(cfg.fg), C.uintattr_t(cfg.bg))
-}
 
 
 func (g *grid) neighbours(x, y int) int {
@@ -146,8 +152,6 @@ func (g *grid) step() {
 
 
 type config struct {
-    w, h int
-    x, y int
     paused bool
     speed int
     showNeighbours bool
@@ -157,13 +161,7 @@ type config struct {
 }
 
 func configCreate() *config {
-    w, h := 300, 300
-    cfg := config{
-        w: w,
-        h: h,
-        x: w / 2,
-        y: h / 2,
-    }
+    cfg := config{}
 
     flag.BoolVar(&cfg.showNeighbours, "sn", false, "Show neighbours")
     flag.IntVar(&cfg.speed, "s", 5, "Speed (1-10)")
@@ -180,34 +178,39 @@ func configCreate() *config {
 
 func main() {
 
-    // I := true
-    // O := false
-    // patterns := [][][]bool{
-    //     {
-    //         {O, I, O, O, O, O, O},
-    //         {O, O, O, I, O, O, O},
-    //         {I, I, O, O, I, I, I},
-    //     },
-    //     {
-    //         {O, I, O},
-    //         {I, I, I},
-    //         {O, I, O},
-    //     },
-    //     {
-    //         {O, O, I},
-    //         {I, O, I},
-    //         {O, I, I},
-    //     },
-    // }
+    I := true
+    O := false
+    patterns := [][][]bool{
+        {
+            {O, I, O, O, O, O, O},
+            {O, O, O, I, O, O, O},
+            {I, I, O, O, I, I, I},
+        },
+        {
+            {O, I, O},
+            {I, I, I},
+            {O, I, O},
+        },
+        {
+            {O, O, I},
+            {I, O, I},
+            {O, I, I},
+        },
+    }
 
-    rand := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano())))
+    // rand := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano())))
 
     C.tb_init()
     C.tb_set_output_mode(C.int(5)) // TB_OUTPUT_TRUECOLOR
 
     cfg := configCreate()
-    g := gridCreate(cfg)
+    g := gridCreate(int(C.tb_width()) / 2, int(C.tb_height()))
     stepTime := 0
+
+    // g.setPattern(patterns[rand.IntN(len(patterns))], cfg.x, cfg.y)
+    // g.setPattern(patterns[2], len(g.grid) / 2, len(g.grid[0]) / 2)
+    g.setPattern(patterns[2], 0, 0)
+    // g.setRandomPattern(rand, len(g.grid) / 2, len(g.grid[0]) / 2, 5, 5)
 
     ev := C.struct_tb_event{}
 
@@ -215,7 +218,8 @@ func main() {
 
         C.tb_peek_event(&ev, 0)
 
-        // C.tb_print(C.int(0), C.int(1), C.uint(0xffffff), C.uint(0x0000ff), C.CString(*s))
+        // C.tb_print(C.int(0), C.int(0), C.uint(0xffffff), C.uint(0x0000ff), C.CString(fmt.Sprintf("tbw=%d tbh=%d gw=%d gh=%d", C.tb_width(), C.tb_height(), len(g.grid), len(g.grid[0]))))
+
         switch ev.ch {
         case ' ':
             cfg.paused = !cfg.paused
@@ -224,26 +228,14 @@ func main() {
         case '+':
             cfg.speed = min(10, cfg.speed + 1)
         case 'r':
-            cfg.x = cfg.w / 2
-            cfg.y = cfg.h / 2
             g.clear()
-        case 'w':
-            cfg.y -= 1
-        case 's':
-            cfg.y += 1
-        case 'a':
-            cfg.x -= 1
-        case 'd':
-            cfg.x += 1
         default:
             break
         }
 
-        if !g.show(cfg) {
-            g.clear()
-            // g.setPattern(patterns[rand.IntN(len(patterns))], cfg.x, cfg.y)
-            g.setRandomPattern(rand, 10, 10, cfg.x, cfg.y)
-        }
+        g.show(cfg)
+
+
         C.tb_present()
         C.tb_clear()
 
@@ -252,6 +244,8 @@ func main() {
             stepTime = 0
         }
         stepTime += 1
+
+        g.resize(int(C.tb_width()) / 2, int(C.tb_height()))
 
         time.Sleep(40 * time.Millisecond)
     }
