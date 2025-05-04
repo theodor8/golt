@@ -99,7 +99,7 @@ func (g *grid) show(cfg *config) {
 
             var ch rune = rune(cfg.ch[0])
             if cfg.showNeighbours {
-                ch = '0' + rune(g.neighbours(x, y))
+                ch = '0' + rune(g.neighbours(x, y, cfg.wrap))
             }
 
             sx := x * 2
@@ -112,16 +112,21 @@ func (g *grid) show(cfg *config) {
 
 
 
-func (g *grid) neighbours(x, y int) int {
+func (g *grid) neighbours(x, y int, wrap bool) int {
     ns := 0
     for dx := -1; dx < 2; dx++ {
         nx := x + dx
-        if nx < 0 || nx >= len(g.grid) {
-            continue
+        if wrap {
+            nx = (nx + len(g.grid)) % len(g.grid)
         }
         for dy := -1; dy < 2; dy++ {
             ny := y + dy
-            if (dx == 0 && dy == 0) || ny < 0 || ny >= len(g.grid[0]) {
+            if wrap {
+                ny = (ny + len(g.grid[0])) % len(g.grid[0])
+            } else if g.oob(nx, ny) {
+                continue
+            }
+            if (dx == 0 && dy == 0) {
                 continue
             }
             if g.grid[nx][ny] {
@@ -132,11 +137,11 @@ func (g *grid) neighbours(x, y int) int {
     return ns
 }
 
-func (g *grid) step() {
+func (g *grid) step(wrap bool) {
     for x := range g.grid {
         for y := range g.grid[x] {
             g.buffer[x][y] = g.grid[x][y]
-            ns := g.neighbours(x, y)
+            ns := g.neighbours(x, y, wrap) // TODO: save neighbours in buffer
             if g.grid[x][y] {
                 if ns < 2 || ns > 3 {
                     g.buffer[x][y] = false
@@ -158,6 +163,7 @@ type config struct {
     fg uint
     bg uint
     ch string
+    wrap bool
 }
 
 func configCreate() *config {
@@ -169,6 +175,7 @@ func configCreate() *config {
     flag.UintVar(&cfg.fg, "fg", 0x0000ff, "Foreground (character) color")
     flag.UintVar(&cfg.bg, "bg", 0xffffff, "Background color")
     flag.StringVar(&cfg.ch, "ch", " ", "Character to use")
+    flag.BoolVar(&cfg.wrap, "w", false, "Wrap around")
 
     flag.Parse()
 
@@ -198,7 +205,7 @@ func main() {
         },
     }
 
-    // rand := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano())))
+    rand := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano())))
 
     C.tb_init()
     C.tb_set_output_mode(C.int(5)) // TB_OUTPUT_TRUECOLOR
@@ -207,10 +214,8 @@ func main() {
     g := gridCreate(int(C.tb_width()) / 2, int(C.tb_height()))
     stepTime := 0
 
-    // g.setPattern(patterns[rand.IntN(len(patterns))], cfg.x, cfg.y)
-    // g.setPattern(patterns[2], len(g.grid) / 2, len(g.grid[0]) / 2)
-    g.setPattern(patterns[2], 0, 0)
-    // g.setRandomPattern(rand, len(g.grid) / 2, len(g.grid[0]) / 2, 5, 5)
+    // g.setPattern(patterns[rand.IntN(len(patterns))], len(g.grid) / 2, len(g.grid[0]) / 2)
+    g.setPattern(patterns[2], len(g.grid) / 2, len(g.grid[0]) / 2)
 
     ev := C.struct_tb_event{}
 
@@ -229,6 +234,7 @@ func main() {
             cfg.speed = min(10, cfg.speed + 1)
         case 'r':
             g.clear()
+            g.setRandomPattern(rand, len(g.grid) / 2, len(g.grid[0]) / 2, 10, 10)
         default:
             break
         }
@@ -240,7 +246,7 @@ func main() {
         C.tb_clear()
 
         if !cfg.paused && stepTime > 10 - cfg.speed {
-            g.step()
+            g.step(cfg.wrap)
             stepTime = 0
         }
         stepTime += 1
