@@ -1,16 +1,46 @@
 package main
 
 /*
+// .so (shared library)
+// #cgo LDFLAGS: -Ltermbox2 -Wl,-rpath,termbox2 -ltermbox2
+
+// .a (static library)
+#cgo LDFLAGS: -Ltermbox2 -Wl,-rpath,termbox2 -l:libtermbox2.a
+
 
 #define TB_IMPL
 #define TB_OPT_ATTR_W 32
-#include "termbox2/termbox2.h"
 
-// .so (shared library)
-#cgo LDFLAGS: -Ltermbox2 -Wl,-rpath,termbox2 -ltermbox2
+#include <stdlib.h>
+#include <stdint.h>
 
-// .a (static library)
-// #cgo LDFLAGS: -Ltermbox2 -Wl,-rpath,termbox2 -l:libtermbox2.a
+typedef uint32_t uintattr_t;
+
+struct tb_event {
+    uint8_t type; // one of `TB_EVENT_*` constants
+    uint8_t mod;  // bitwise `TB_MOD_*` constants
+    uint16_t key; // one of `TB_KEY_*` constants
+    uint32_t ch;  // a Unicode codepoint
+    int32_t w;    // resize width
+    int32_t h;    // resize height
+    int32_t x;    // mouse x
+    int32_t y;    // mouse y
+};
+
+int tb_init();
+int tb_shutdown();
+int tb_width();
+int tb_height();
+int tb_clear();
+int tb_present();
+int tb_set_cursor(int cx, int cy);
+int tb_hide_cursor();
+int tb_set_cell(int x, int y, uint32_t ch, uintattr_t fg, uintattr_t bg);
+int tb_peek_event(struct tb_event *event, int timeout_ms);
+int tb_poll_event(struct tb_event *event);
+int tb_print(int x, int y, uintattr_t fg, uintattr_t bg, const char *str);
+int tb_printf(int x, int y, uintattr_t fg, uintattr_t bg, const char *fmt, ...);
+int tb_set_output_mode(int mode);
 
 */
 import "C"
@@ -19,21 +49,26 @@ import (
     "math/rand/v2"
     "slices"
     "time"
+    "fmt"
+    "unsafe"
 )
 
 
 type grid struct {
     grid [][]bool
     buffer [][]bool
+    ns [][]int // neighbours
 }
 
 func gridCreate(w, h int) *grid {
     g := grid{}
     g.grid = make([][]bool, w)
     g.buffer = make([][]bool, w)
+    g.ns = make([][]int, w)
     for x := range w {
         g.grid[x] = make([]bool, h)
         g.buffer[x] = make([]bool, h)
+        g.ns[x] = make([]int, h)
     }
     return &g
 }
@@ -51,6 +86,9 @@ func (g *grid) clear() {
 }
 
 func (g *grid) resize(w, h int) {
+    if w <= 10 || h <= 10 {
+        return
+    }
     if w != len(g.grid) {
         if w > cap(g.grid) {
             g.grid = slices.Grow(g.grid, (w - cap(g.grid)) * 2)
@@ -105,59 +143,61 @@ func (g *grid) show(cfg *config) {
                 continue
             }
 
-            var lch rune = rune(cfg.ch[0])
-            var rch rune = rune(cfg.ch[1])
+            var lch rune = rune(cfg.cellText[0])
+            var rch rune = rune(cfg.cellText[1])
             if cfg.showNeighbours {
-                lch = '0' + rune(g.neighbours(x, y, cfg.wrap))
-                rch = '0' + rune(g.neighbours(x, y, cfg.wrap))
+                lch = '0' + rune(g.ns[x][y])
+                rch = '0' + rune(g.ns[x][y])
 
             }
 
             sx := x * 2
             sy := y
-            C.tb_set_cell(C.int(sx), C.int(sy), C.uint32_t(lch), C.uintattr_t(cfg.fg), C.uintattr_t(cfg.bg))
-            C.tb_set_cell(C.int(sx + 1), C.int(sy), C.uint32_t(rch), C.uintattr_t(cfg.fg), C.uintattr_t(cfg.bg))
+            C.tb_set_cell(C.int(sx), C.int(sy), C.uint32_t(lch), C.uintattr_t(cfg.fgColor), C.uintattr_t(cfg.bgColor))
+            C.tb_set_cell(C.int(sx + 1), C.int(sy), C.uint32_t(rch), C.uintattr_t(cfg.fgColor), C.uintattr_t(cfg.bgColor))
         }
     }
 }
 
 
-
-func (g *grid) neighbours(x, y int, wrap bool) int {
-    ns := 0
-    for dx := -1; dx < 2; dx++ {
-        nx := x + dx
-        if wrap {
-            nx = (nx + len(g.grid)) % len(g.grid)
-        }
-        for dy := -1; dy < 2; dy++ {
-            ny := y + dy
-            if wrap {
-                ny = (ny + len(g.grid[0])) % len(g.grid[0])
-            } else if g.oob(nx, ny) {
-                continue
+func (g *grid) computeNeighbours(wrap bool) {
+    for x := range g.grid {
+        for y := range g.grid[x] {
+            ns := 0
+            for dx := -1; dx < 2; dx++ {
+                nx := x + dx
+                if wrap {
+                    nx = (nx + len(g.grid)) % len(g.grid)
+                }
+                for dy := -1; dy < 2; dy++ {
+                    ny := y + dy
+                    if wrap {
+                        ny = (ny + len(g.grid[0])) % len(g.grid[0])
+                    } else if g.oob(nx, ny) {
+                        continue
+                    }
+                    if (dx == 0 && dy == 0) {
+                        continue
+                    }
+                    if g.grid[nx][ny] {
+                        ns += 1
+                    }
+                }
             }
-            if (dx == 0 && dy == 0) {
-                continue
-            }
-            if g.grid[nx][ny] {
-                ns += 1
-            }
+            g.ns[x][y] = ns
         }
     }
-    return ns
 }
 
-func (g *grid) step(wrap bool) {
+func (g *grid) step() {
     for x := range g.grid {
         for y := range g.grid[x] {
             g.buffer[x][y] = g.grid[x][y]
-            ns := g.neighbours(x, y, wrap) // TODO: save neighbours in buffer
             if g.grid[x][y] {
-                if ns < 2 || ns > 3 {
+                if g.ns[x][y] < 2 || g.ns[x][y] > 3 {
                     g.buffer[x][y] = false
                 }
-            } else if ns == 3 {
+            } else if g.ns[x][y] == 3 {
                 g.buffer[x][y] = true
             }
         }
@@ -166,33 +206,36 @@ func (g *grid) step(wrap bool) {
 }
 
 
-
 type config struct {
     paused bool
     speed int
+    debug bool
     showNeighbours bool
-    fg uint
-    bg uint
-    ch string
+    fgColor uint
+    bgColor uint
+    cellText string
     wrap bool
 }
 
 func configCreate() *config {
     cfg := config{}
 
-    flag.BoolVar(&cfg.showNeighbours, "sn", false, "Show neighbours")
-    flag.IntVar(&cfg.speed, "s", 5, "Speed (1-10)")
     flag.BoolVar(&cfg.paused, "p", false, "Paused")
-    flag.UintVar(&cfg.fg, "fg", 0x0000ff, "Foreground (character) color")
-    flag.UintVar(&cfg.bg, "bg", 0xffffff, "Background color")
-    flag.StringVar(&cfg.ch, "ch", " ", "Characters to use for cells, length 2")
+    flag.IntVar(&cfg.speed, "s", 5, "Speed (1-10)")
+    flag.BoolVar(&cfg.debug, "d", false, "Debug mode")
+    flag.BoolVar(&cfg.showNeighbours, "n", false, "Show neighbours")
+    flag.UintVar(&cfg.fgColor, "f", 0x0000ff, "Foreground (text) color")
+    flag.UintVar(&cfg.bgColor, "b", 0xffffff, "Background color")
+    flag.StringVar(&cfg.cellText, "t", "  ", "Text to use for cells, length 2")
     flag.BoolVar(&cfg.wrap, "w", false, "Wrap around")
 
     flag.Parse()
 
-    if len(cfg.ch) != 2 {
-        cfg.ch = "  "
+    if len(cfg.cellText) != 2 {
+        cfg.cellText = "  "
     }
+
+    cfg.speed = min(max(1, cfg.speed), 10)
 
     return &cfg
 }
@@ -239,7 +282,11 @@ func main() {
 
         C.tb_peek_event(&ev, 0)
 
-        // C.tb_print(C.int(0), C.int(0), C.uint(0xffffff), C.uint(0x0000ff), C.CString(fmt.Sprintf("tbw=%d tbh=%d gw=%d gh=%d", C.tb_width(), C.tb_height(), len(g.grid), len(g.grid[0]))))
+        if cfg.debug {
+            s := C.CString(fmt.Sprintf("tbw=%v tbh=%v gw=%v gh=%v s=%v p=%v", C.tb_width(), C.tb_height(), len(g.grid), len(g.grid[0]), cfg.speed, cfg.paused))
+            C.tb_print(0, 0, 0x01ffffff, 0, s)
+            C.free(unsafe.Pointer(s))
+        }
 
         switch ev.ch {
         case ' ':
@@ -255,6 +302,8 @@ func main() {
             break
         }
 
+        g.computeNeighbours(cfg.wrap)
+
         g.show(cfg)
 
 
@@ -262,7 +311,7 @@ func main() {
         C.tb_clear()
 
         if !cfg.paused && stepTime > 10 - cfg.speed {
-            g.step(cfg.wrap)
+            g.step()
             stepTime = 0
         }
         stepTime += 1
