@@ -1,43 +1,8 @@
-// go run example.go
-
 package main
 
 /*
-#cgo LDFLAGS: -Wl,-rpath,. -ltermbox2
-
-#include <stdint.h>
-typedef struct tb_event_s {
-    uint8_t _type;
-    uint8_t mod;
-    uint16_t key;
-    uint32_t ch;
-    int32_t w;
-    int32_t h;
-    int32_t x;
-    int32_t y;
-} tb_event;
-
-int tb_init();
-int tb_shutdown();
-
-int tb_width();
-int tb_height();
-
-int tb_clear();
-int tb_present();
-
-int tb_set_cursor(int cx, int cy);
-int tb_hide_cursor();
-
-int tb_set_cell(int x, int y, uint32_t ch, uint32_t fg, uint32_t bg);
-
-int tb_peek_event(tb_event *event, int timeout_ms);
-int tb_poll_event(tb_event *event);
-
-int tb_print(int x, int y, uint32_t fg, uint32_t bg, const char *str);
-
-int tb_set_input_mode(int mode);
-int tb_set_output_mode(int mode);
+#define TB_IMPL
+#include "termbox2.h"
 */
 import "C"
 import (
@@ -132,12 +97,12 @@ func setCell(x, y, ns int, cfg *config) {
     C.tb_set_cell(C.int(sx),
                   C.int(sy),
                   C.uint32_t(ch),
-                  C.uint32_t(cfg.fg),
-                  C.uint32_t(cfg.bg))
+                  C.uintattr_t(cfg.fg),
+                  C.uintattr_t(cfg.bg))
     C.tb_set_cell(C.int(sx + 1),
                   C.int(sy),
                   C.uint32_t(ch),
-                  C.uint32_t(cfg.fg), C.uint32_t(cfg.bg))
+                  C.uintattr_t(cfg.fg), C.uintattr_t(cfg.bg))
 }
 
 
@@ -244,7 +209,7 @@ func main() {
     g := gridCreate(cfg)
     stepTime := 0
 
-    ev := C.tb_event{}
+    ev := C.struct_tb_event{}
 
     for ev.key != 27 && ev.ch != 'q' {
 
