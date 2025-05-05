@@ -41,109 +41,108 @@ int tb_set_output_mode(int mode);
 */
 import "C"
 import (
-    "flag"
-    "math/rand/v2"
-    "slices"
-    "time"
-    "fmt"
-    "unsafe"
+	"flag"
+	"fmt"
+	"math/rand/v2"
+	"slices"
+	"time"
+	"unsafe"
 )
 
 
-type grid struct {
-    grid [][]bool
-    buffer [][]bool
-    ns [][]int // neighbours
-}
 
-func gridCreate(w, h int) *grid {
-    g := grid{}
-    g.grid = make([][]bool, w)
-    g.buffer = make([][]bool, w)
-    g.ns = make([][]int, w)
-    for x := range w {
-        g.grid[x] = make([]bool, h)
-        g.buffer[x] = make([]bool, h)
-        g.ns[x] = make([]int, h)
+type cell struct {
+    val bool
+    ns uint8
+}
+type grid [][]cell
+
+func gridCreate(w, h int) grid {
+    var g grid = make([][]cell, w)
+    for x := range g {
+        g[x] = make([]cell, h)
     }
-    return &g
+    return g
 }
 
-func (g *grid) oob(x, y int) bool {
-    return x < 0 || x >= len(g.grid) || y < 0 || y >= len(g.grid[0])
+func (g grid) oob(x, y int) bool {
+    return x < 0 || x >= len(g) || y < 0 || y >= len(g[0])
 }
 
-func (g *grid) clear() {
-    for x := range g.grid {
-        for y := range g.grid[x] {
-            g.grid[x][y] = false
+func (g grid) clear() {
+    for x := range g {
+        for y := range g[x] {
+            g[x][y] = cell{}
         }
     }
 }
 
-func (g *grid) resize(w, h int) {
+func (g grid) resize(w, h int) grid {
     if w <= 10 || h <= 10 {
-        return
+        return g
     }
-    if w != len(g.grid) {
-        if w > cap(g.grid) {
-            g.grid = slices.Grow(g.grid, (w - cap(g.grid)) * 2)
-            g.buffer = slices.Grow(g.buffer, (w - cap(g.grid)) * 2)
-        }
-        g.grid = g.grid[:w]
-        g.buffer = g.buffer[:w]
-    }
-    if h != len(g.grid[0]) {
-        if h > cap(g.grid[0]) {
-            for x := range g.grid {
-                g.grid[x] = slices.Grow(g.grid[x], (h - cap(g.grid[0])) * 2)
-                g.buffer[x] = slices.Grow(g.buffer[x], (h - cap(g.grid[0])) * 2)
+    if w != len(g) {
+        if w > cap(g) {
+            c := cap(g)
+            g = slices.Grow(g, w - cap(g))
+            g = g[:w]
+            for x := c; x < w; x++ {
+                g[x] = make([]cell, len(g[0]), cap(g[0]))
             }
         }
-        for x := range g.grid {
-            g.grid[x] = g.grid[x][:h]
-            g.buffer[x] = g.buffer[x][:h]
+        g = g[:w]
+    }
+    if h != len(g[0]) {
+        if h > cap(g[0]) {
+            c := cap(g[0])
+            for x := range g {
+                g[x] = slices.Grow(g[x], h - c)
+            }
+        }
+        for x := range g {
+            g[x] = g[x][:h]
         }
     }
+    return g
 }
 
 
 
 
-func (g *grid) setPattern(pattern [][]bool, x, y int) {
+func (g grid) setPattern(pattern [][]bool, x, y int) {
     for py := range pattern {
         for px := range pattern[py] {
             if !pattern[py][px] || g.oob(px + x, py + y) {
                 continue
             }
-            g.grid[px + x][py + y] = true
+            g[px + x][py + y].val = true
         }
     }
 }
 
-func (g *grid) setRandomPattern(rand *rand.Rand, x, y, w, h int) {
+func (g grid) setRandomPattern(rand *rand.Rand, x, y, w, h, n int) {
     for px := x - w / 2; px < x + w / 2; px++ {
         for py := y - h / 2; py < y + h / 2; py++ {
             if g.oob(px, py) {
                 continue
             }
-            g.grid[px][py] = rand.IntN(2) == 1
+            g[px][py].val = rand.IntN(n) == 1
         }
     }
 }
 
-func (g *grid) show(cfg *config) {
-    for x := range g.grid {
-        for y := range g.grid[x] {
-            if !g.grid[x][y] {
+func (g grid) show(cfg *config) {
+    for x := range g {
+        for y := range g[x] {
+            if !g[x][y].val {
                 continue
             }
 
             var lch rune = rune(cfg.cellText[0])
             var rch rune = rune(cfg.cellText[1])
             if cfg.showNeighbours {
-                lch = '0' + rune(g.ns[x][y])
-                rch = '0' + rune(g.ns[x][y])
+                lch = '0' + rune(g[x][y].ns)
+                rch = '0' + rune(g[x][y].ns)
 
             }
 
@@ -156,49 +155,49 @@ func (g *grid) show(cfg *config) {
 }
 
 
-func (g *grid) computeNeighbours(wrap bool) {
-    for x := range g.grid {
-        for y := range g.grid[x] {
-            ns := 0
+func (g grid) computeNeighbours(wrap bool) {
+    for x := range g {
+        for y := range g[x] {
+            var ns uint8 = 0
             for dx := -1; dx < 2; dx++ {
                 nx := x + dx
                 if wrap {
-                    nx = (nx + len(g.grid)) % len(g.grid)
+                    nx = (nx + len(g)) % len(g)
                 }
                 for dy := -1; dy < 2; dy++ {
                     ny := y + dy
                     if wrap {
-                        ny = (ny + len(g.grid[0])) % len(g.grid[0])
+                        ny = (ny + len(g[0])) % len(g[0])
                     } else if g.oob(nx, ny) {
                         continue
                     }
                     if (dx == 0 && dy == 0) {
                         continue
                     }
-                    if g.grid[nx][ny] {
+                    if g[nx][ny].val {
                         ns += 1
                     }
                 }
             }
-            g.ns[x][y] = ns
+            g[x][y].ns = ns
+
         }
     }
 }
 
-func (g *grid) step() {
-    for x := range g.grid {
-        for y := range g.grid[x] {
-            g.buffer[x][y] = g.grid[x][y]
-            if g.grid[x][y] {
-                if g.ns[x][y] < 2 || g.ns[x][y] > 3 {
-                    g.buffer[x][y] = false
+func (g grid) step(wrap bool) {
+    for x := range g {
+        for y := range g[x] {
+            if g[x][y].val {
+                if g[x][y].ns < 2 || g[x][y].ns > 3 {
+                    g[x][y].val = false
                 }
-            } else if g.ns[x][y] == 3 {
-                g.buffer[x][y] = true
+            } else if g[x][y].ns == 3 {
+                g[x][y].val = true
             }
         }
     }
-    g.grid, g.buffer = g.buffer, g.grid
+    g.computeNeighbours(wrap)
 }
 
 
@@ -217,7 +216,7 @@ func configCreate() *config {
     cfg := config{}
 
     flag.BoolVar(&cfg.paused, "p", false, "Paused")
-    flag.IntVar(&cfg.speed, "s", 5, "Speed (1-10)")
+    flag.IntVar(&cfg.speed, "s", 8, "Speed (steps per second)")
     flag.BoolVar(&cfg.debug, "d", false, "Debug mode")
     flag.BoolVar(&cfg.showNeighbours, "n", false, "Show neighbours")
     flag.UintVar(&cfg.fgColor, "f", 0x0000ff, "Foreground (text) color")
@@ -231,7 +230,7 @@ func configCreate() *config {
         cfg.cellText = "  "
     }
 
-    cfg.speed = min(max(1, cfg.speed), 10)
+    cfg.speed = max(1, cfg.speed)
 
     return &cfg
 }
@@ -267,19 +266,22 @@ func main() {
 
     cfg := configCreate()
     g := gridCreate(int(C.tb_width()) / 2, int(C.tb_height()))
-    stepTime := 0
 
-    // g.setPattern(patterns[rand.IntN(len(patterns))], len(g.grid) / 2, len(g.grid[0]) / 2)
-    g.setPattern(patterns[2], len(g.grid) / 2, len(g.grid[0]) / 2)
+    // g.setPattern(patterns[rand.IntN(len(patterns))], len(g) / 2, len(g[0]) / 2)
+    g.setPattern(patterns[2], len(g) / 2, len(g[0]) / 2)
 
     ev := C.struct_tb_event{}
+    var stepDuration time.Duration
+    frameTime := time.Now()
 
+    g.computeNeighbours(cfg.wrap) // for first step and render
     for ev.key != 27 && ev.ch != 'q' {
 
+        g = g.resize(int(C.tb_width()) / 2, int(C.tb_height()))
         C.tb_peek_event(&ev, 0)
 
         if cfg.debug {
-            s := C.CString(fmt.Sprintf("tbw=%v tbh=%v gw=%v gh=%v s=%v p=%v", C.tb_width(), C.tb_height(), len(g.grid), len(g.grid[0]), cfg.speed, cfg.paused))
+            s := C.CString(fmt.Sprintf("tbw=%v tbh=%v gw=%v gh=%v s=%v p=%v", C.tb_width(), C.tb_height(), len(g), len(g[0]), cfg.speed, cfg.paused))
             C.tb_print(0, 0, 0x01ffffff, 0, s)
             C.free(unsafe.Pointer(s))
         }
@@ -290,31 +292,31 @@ func main() {
         case '-':
             cfg.speed = max(1, cfg.speed - 1)
         case '+':
-            cfg.speed = min(10, cfg.speed + 1)
+            cfg.speed += 1 
         case 'r':
             g.clear()
-            g.setRandomPattern(rand, len(g.grid) / 2, len(g.grid[0]) / 2, 10, 10)
+            g.setRandomPattern(rand, len(g) / 2, len(g[0]) / 2, 30, 30, 2)
+            g.computeNeighbours(cfg.wrap)
         default:
             break
         }
 
-        g.computeNeighbours(cfg.wrap)
 
         g.show(cfg)
-
 
         C.tb_present()
         C.tb_clear()
 
-        if !cfg.paused && stepTime > 10 - cfg.speed {
-            g.step()
-            stepTime = 0
+        if !cfg.paused {
+            stepDuration += time.Since(frameTime)
+            for stepDuration >= time.Second / time.Duration(cfg.speed) {
+                g.step(cfg.wrap)
+                stepDuration -= time.Second / time.Duration(cfg.speed)
+            }
         }
-        stepTime += 1
+        frameTime = time.Now()
 
-        g.resize(int(C.tb_width()) / 2, int(C.tb_height()))
-
-        time.Sleep(40 * time.Millisecond)
+        time.Sleep(time.Millisecond * 40)
     }
 
 }
