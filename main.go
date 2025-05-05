@@ -1,11 +1,7 @@
 package main
 
 /*
-// .so (shared library)
-// #cgo LDFLAGS: -Ltermbox2 -Wl,-rpath,termbox2 -ltermbox2
-
-// .a (static library)
-#cgo LDFLAGS: -Ltermbox2 -Wl,-rpath,termbox2 -l:libtermbox2.a
+#cgo LDFLAGS: -L${SRCDIR}/termbox2 -Wl,-rpath,${SRCDIR}/termbox2 -l:libtermbox2.a
 
 
 #define TB_IMPL
