@@ -53,7 +53,7 @@ import (
 
 type cell struct {
     val bool
-    ns uint8
+    ns, age uint8
 }
 type grid [][]cell
 
@@ -140,10 +140,17 @@ func (g grid) show(cfg *config) {
 
             var lch rune = rune(cfg.cellText[0])
             var rch rune = rune(cfg.cellText[1])
-            if cfg.showNeighbours {
-                lch = '0' + rune(g[x][y].ns)
-                rch = '0' + rune(g[x][y].ns)
 
+            if cfg.showNeighbours {
+                ns := fmt.Sprintf("%02d", g[x][y].ns % 100)
+                lch = rune(ns[0])
+                rch = rune(ns[1])
+            }
+
+            if cfg.showAge {
+                age := fmt.Sprintf("%02d", g[x][y].age % 100)
+                lch = rune(age[0])
+                rch = rune(age[1])
             }
 
             sx := x * 2
@@ -191,9 +198,13 @@ func (g grid) step(wrap bool) {
             if g[x][y].val {
                 if g[x][y].ns < 2 || g[x][y].ns > 3 {
                     g[x][y].val = false
+                    g[x][y].age = 0
+                } else {
+                    g[x][y].age += 1
                 }
             } else if g[x][y].ns == 3 {
                 g[x][y].val = true
+                g[x][y].age = 1
             }
         }
     }
@@ -210,6 +221,7 @@ type config struct {
     bgColor uint
     cellText string
     wrap bool
+    showAge bool
 }
 
 func configCreate() *config {
@@ -218,11 +230,12 @@ func configCreate() *config {
     flag.BoolVar(&cfg.paused, "p", false, "Paused")
     flag.IntVar(&cfg.speed, "s", 8, "Speed (steps per second)")
     flag.BoolVar(&cfg.debug, "d", false, "Debug mode")
-    flag.BoolVar(&cfg.showNeighbours, "n", false, "Show neighbours")
+    flag.BoolVar(&cfg.showNeighbours, "n", false, "Show number of cell neighbours")
     flag.UintVar(&cfg.fgColor, "f", 0x0000ff, "Foreground (text) color")
     flag.UintVar(&cfg.bgColor, "b", 0xffffff, "Background color")
     flag.StringVar(&cfg.cellText, "t", "  ", "Text to use for cells, length 2")
     flag.BoolVar(&cfg.wrap, "w", false, "Wrap around")
+    flag.BoolVar(&cfg.showAge, "a", false, "Show age of cells")
 
     flag.Parse()
 
