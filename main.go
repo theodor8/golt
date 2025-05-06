@@ -204,7 +204,6 @@ func (g grid) step(wrap bool) {
                 }
             } else if g[x][y].ns == 3 {
                 g[x][y].val = true
-                g[x][y].age = 1
             }
         }
     }
